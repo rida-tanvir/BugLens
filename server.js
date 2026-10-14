@@ -35,19 +35,33 @@ app.post("/api/identify", async (req, res) => {
   if (!image || typeof image !== "string") return res.status(400).json({ error: "No image provided." });
   const ctx = bitten ? `\nContext: person was bitten/stung. Region: ${String(region || "unknown").slice(0, 80)}.` : "";
   try {
-    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-goog-api-key": KEY },
-      body: JSON.stringify({
-        contents: [{ parts: [
-          { inline_data: { mime_type: "image/jpeg", data: image } },
-          { text: PROMPT + ctx }
-        ]}],
-        generationConfig: { responseMimeType: "application/json" }
-      })
+    const body = JSON.stringify({
+      contents: [{ parts: [
+        { inline_data: { mime_type: "image/jpeg", data: image } },
+        { text: PROMPT + ctx }
+      ]}],
+      generationConfig: { responseMimeType: "application/json" }
     });
-    const data = await r.json();
-    if (!r.ok) { console.error("Gemini error:", r.status, JSON.stringify(data).slice(0, 500)); return res.status(502).json({ error: "Analysis service error (" + r.status + ")." }); }
+    // Try the main model, then fallbacks, retrying when Google is busy (503/429)
+    const models = [...new Set([MODEL, "gemini-3.6-flash", "gemini-2.5-flash"])];
+    let data = null, last = 0;
+    outer: for (const m of models) {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`, {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-goog-api-key": KEY },
+          body
+        });
+        const d = await r.json();
+        if (r.ok) { data = d; break outer; }
+        last = r.status;
+        console.error("Gemini error:", m, r.status, JSON.stringify(d).slice(0, 300));
+        if (r.status !== 503 && r.status !== 429 && r.status !== 404) break outer;
+        if (r.status === 404) break;
+        await new Promise(ok => setTimeout(ok, 1500));
+      }
+    }
+    if (!data) return res.status(502).json({ error: last === 503 ? "The AI service is busy. Please try again in a minute." : "Analysis service error (" + last + ")." });
     const text = data.candidates[0].content.parts.map(p => p.text || "").join("").replace(/```json|```/g, "").trim();
     res.json(JSON.parse(text));
   } catch (e) {
