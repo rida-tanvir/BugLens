@@ -47,10 +47,11 @@ app.post("/api/identify", async (req, res) => {
       })
     });
     const data = await r.json();
-    if (!r.ok) return res.status(502).json({ error: "Analysis service error." });
+    if (!r.ok) { console.error("Gemini error:", r.status, JSON.stringify(data).slice(0, 500)); return res.status(502).json({ error: "Analysis service error (" + r.status + ")." }); }
     const text = data.candidates[0].content.parts.map(p => p.text || "").join("").replace(/```json|```/g, "").trim();
     res.json(JSON.parse(text));
   } catch (e) {
+    console.error("Server error:", e);
     res.status(500).json({ error: "Could not analyse the image. Please try again." });
   }
 });
