@@ -4,8 +4,8 @@ const app = express();
 app.use(express.json({ limit: "8mb" }));
 app.use(express.static(path.join(__dirname, "public")));
 
-const KEY = process.env.ANTHROPIC_API_KEY;
-const MODEL = process.env.MODEL || "claude-sonnet-5-5";
+const KEY = process.env.GEMINI_API_KEY;
+const MODEL = process.env.MODEL || "gemini-3.5-flash";
 const PROMPT = `You are an expert entomologist. Identify the insect/arthropod in the attached photo.
 Return ONLY JSON (no markdown) with this exact shape:
 {"is_arthropod":bool,"image_quality":"good|fair|poor","quality_note":"string",
@@ -35,20 +35,20 @@ app.post("/api/identify", async (req, res) => {
   if (!image || typeof image !== "string") return res.status(400).json({ error: "No image provided." });
   const ctx = bitten ? `\nContext: person was bitten/stung. Region: ${String(region || "unknown").slice(0, 80)}.` : "";
   try {
-    const r = await fetch("https://api.anthropic.com/v1/messages", {
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },
+      headers: { "content-type": "application/json", "x-goog-api-key": KEY },
       body: JSON.stringify({
-        model: MODEL, max_tokens: 1200,
-        messages: [{ role: "user", content: [
-          { type: "image", source: { type: "base64", media_type: "image/jpeg", data: image } },
-          { type: "text", text: PROMPT + ctx }
-        ]}]
+        contents: [{ parts: [
+          { inline_data: { mime_type: "image/jpeg", data: image } },
+          { text: PROMPT + ctx }
+        ]}],
+        generationConfig: { responseMimeType: "application/json" }
       })
     });
     const data = await r.json();
     if (!r.ok) return res.status(502).json({ error: "Analysis service error." });
-    const text = data.content.map(c => c.text || "").join("").replace(/```json|```/g, "").trim();
+    const text = data.candidates[0].content.parts.map(p => p.text || "").join("").replace(/```json|```/g, "").trim();
     res.json(JSON.parse(text));
   } catch (e) {
     res.status(500).json({ error: "Could not analyse the image. Please try again." });
